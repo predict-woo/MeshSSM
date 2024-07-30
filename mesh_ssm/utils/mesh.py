@@ -58,7 +58,7 @@ class FaceFeatureExtractor:
 
     def get_face_feature_graph(self, meshes: Meshes):
         faces = meshes.faces_packed()
-        face_np = faces.numpy()
+        face_np = faces.cpu().numpy()
 
         # Triangle-Triangle Adjacency Matrix
         TT, _ = igl.triangle_triangle_adjacency(face_np)
@@ -76,6 +76,9 @@ class FaceFeatureExtractor:
         edges = TT_combined.reshape(-1, 2)
         edges = edges[edges[:, 1] != -1]
         edges = rearrange(edges, "n b -> b n")
+
+        # move to GPU
+        edges = edges.to(meshes.verts_packed().device)
         return edges
 
     def get_data_batch(self, meshes: Meshes):
@@ -91,8 +94,9 @@ class FaceFeatureExtractor:
 
 
 class Transforms:
-    def __init__(self):
+    def __init__(self, device):
         self.kernel_size = 9
+        self.device = device
         self.kernel = self.gaussian_kernel(
             size=self.kernel_size, sigma=self.kernel_size / 6.0
         )
@@ -159,7 +163,7 @@ class Transforms:
 
     def gaussian_kernel(self, size: int, sigma: float) -> torch.Tensor:
         # Generate a range of values
-        kernel = torch.arange(0, size).float()
+        kernel = torch.arange(0, size, device=self.device).float()
 
         # Calculate the center index
         center = (size - 1) / 2
@@ -182,8 +186,7 @@ class Transforms:
         indices = scaled_verts.long()
 
         # Initialize the one-hot tensor
-        one_hot_verts = torch.zeros((verts.shape[0], 3, num_bins), device=verts.device)
-
+        one_hot_verts = torch.zeros((verts.shape[0], 3, num_bins), device=self.device)
         # Scatter the indices to create one-hot encoding
         one_hot_verts.scatter_(2, indices.unsqueeze(-1), 1.0)
 

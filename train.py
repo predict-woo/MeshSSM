@@ -1,6 +1,11 @@
 import torch
-import torch.nn as nn
-from models.mesh_encoder import MeshEncoder
-from utils.mesh import FaceFeatureExtractor
-from pytorch3d.structures import Meshes
-from pytorch3d.io import load_obj
+import lightning as L
+from lightning.pytorch.demos.boring_classes import BoringModel
+
+ngpus = 1
+
+model = BoringModel()
+trainer = L.Trainer(max_epochs=10, devices=ngpus)
+
+trainer.fit(model)
+print("Done")

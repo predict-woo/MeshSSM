@@ -1,42 +1,25 @@
-from mesh_ssm.utils.agument import (
-    scale_augmentation,
-    jitter_shift_augmentation,
-    normalize_mesh,
-    sort_mesh_faces,
-)
+from mesh_ssm.utils.augment import normalize_mesh, augment_mesh
 from pytorch3d.structures import Meshes
 from pytorch3d.io import save_obj
 from pytorch3d.io import load_obj
+from mesh_ssm.utils.render import render_mesh
+from mesh_ssm.utils.render import _deconstruct_mesh, reconstruct_mesh
 
 # Example usage:
 if __name__ == "__main__":
 
     # Create a sample mesh (replace this with actual loading code)
-    for i in range(1):
-        verts, faces, aux = load_obj("Horse2.obj")
-        mesh = Meshes(verts=[verts], faces=[faces.verts_idx])
+    verts, faces, aux = load_obj("final_mesh_0.obj")
+    meshes = Meshes(verts=[verts] * 10, faces=[faces.verts_idx] * 10)
 
-        # Apply scale augmentation
-        mesh_scaled = scale_augmentation(mesh)
+    deconstructed_mesh = _deconstruct_mesh(meshes)
+    print(deconstructed_mesh.shape)
+    reconstructed_mesh = reconstruct_mesh(deconstructed_mesh)
 
-        # Apply jitter shift augmentation
-        mesh_jittered = jitter_shift_augmentation(mesh_scaled)
+    render_mesh(reconstructed_mesh)
+# # Apply scale augmentation
+# meshes = augment_mesh(meshes)
 
-        # Normalize the mesh
-        mesh_normalized = normalize_mesh(mesh_jittered)
-
-        # Sort the mesh faces
-        mesh_sorted = sort_mesh_faces(mesh_normalized)
-
-        # Final mesh
-        final_mesh = mesh_sorted
-
-        # save the final mesh
-        save_obj(
-            f"final_mesh_{i}.obj",
-            final_mesh.verts_list()[0],
-            final_mesh.faces_list()[0],
-        )
-
-        # Print the final mesh vertices to verify
-        final_mesh.verts_list()
+# # save each mesh
+# for i, mesh in enumerate(meshes):
+#     save_obj(f"Horse2_augmented_{i}.obj", mesh.verts_packed(), mesh.faces_packed())

@@ -1,0 +1,6 @@
+lightning_logs/
+wandb/
+mesh-ssm/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
