@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn import SAGEConv
+from torch_geometric.nn import SAGEConv, BatchNorm
 from torch_geometric.data import Data
 from mesh_ssm.utils.mesh import FaceFeatureExtractor
 

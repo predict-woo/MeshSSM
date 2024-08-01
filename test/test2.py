@@ -1,6 +1,7 @@
 import torch
 import kaolin.ops.mesh as mesh_ops
 
+from mesh_ssm.utils.augment import augment_mesh
 
 # Check CUDA availability
 cuda_available = torch.cuda.is_available()

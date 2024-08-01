@@ -1,10 +1,11 @@
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
+from torch.optim.optimizer import Optimizer
 from .mesh_encoder import MeshEncoder
 from .mesh_decoder import MeshDecoder
 from .residual_vector_quantize import ResidualVectorQuantizer
 import torch.nn as nn
 from pytorch3d.structures import Meshes
-from pytorch3d.io import load_obj
+from pytorch3d.io import save_obj
 from mesh_ssm.utils.mesh import FaceFeatureExtractor, Transforms
 from einops import rearrange
 import lightning as L
@@ -12,6 +13,22 @@ import torch
 import torch.nn.functional as F
 from mesh_ssm.utils.render import reconstruct_mesh, render_mesh
 import wandb
+from lightning.pytorch.utilities import grad_norm
+import numpy as np
+
+
+def getBack(var_grad_fn):
+    print(var_grad_fn)
+    for n in var_grad_fn.next_functions:
+        if n[0]:
+            try:
+                tensor = getattr(n[0], "variable")
+                print(n[0])
+                print("Tensor with grad found:", tensor)
+                print(" - gradient:", tensor.grad)
+                print()
+            except AttributeError as e:
+                getBack(n[0])
 
 
 class MeshAutoencoder(L.LightningModule):
@@ -22,9 +39,23 @@ class MeshAutoencoder(L.LightningModule):
         self.rq = ResidualVectorQuantizer(n_e=192, e_dim=192, num_quantizers=2)
         self.feature_extractor = FaceFeatureExtractor()
         self.transforms = None
+        self.criterion = nn.CrossEntropyLoss()
+
+    # def on_before_optimizer_step(self, optimizer: Optimizer) -> None:
+    #     enc_norms = grad_norm(self.encoder, norm_type=2)
+    #     dec_norms = grad_norm(self.decoder, norm_type=2)
+    #     rq_norms = grad_norm(self.rq, norm_type=2)
+    #     self.log_dict(enc_norms)
+    #     self.log_dict(dec_norms)
+    #     self.log_dict(rq_norms)
 
     def setup(self, stage=None):
         self.transforms = Transforms(device=self.device)
+        torch.set_printoptions(precision=4, sci_mode=False)
+
+    def test_step(self, batch: Meshes, batch_idx: int):
+        recons_loss, commit_loss = self.common_step(batch, batch_idx, render=True)
+        return recons_loss + commit_loss
 
     def training_step(self, batch: Meshes, batch_idx: int):
         recons_loss, commit_loss = self.common_step(batch, batch_idx)
@@ -36,7 +67,7 @@ class MeshAutoencoder(L.LightningModule):
         recons_loss, commit_loss = self.common_step(batch, batch_idx, render=True)
         self.log("validation reconstruction loss", recons_loss, batch_size=1)
         self.log("validation commitment loss", commit_loss, batch_size=1)
-        return recons_loss, commit_loss
+        return recons_loss + commit_loss
 
     def common_step(self, batch: Meshes, batch_idx: int, render=False):
         features = self.feature_extractor.get_derived_face_features(batch)
@@ -44,11 +75,12 @@ class MeshAutoencoder(L.LightningModule):
         face_features = self.encoder(features, edges)
 
         # split face features into vertex features
-        vertex_features = self.transforms.split_features(face_features)
+        vertex_features = rearrange(face_features, "f (n d) -> f n d", n=3)
 
         # average face features
         faces = batch.faces_packed()
         vertex_features = vertex_features.unsqueeze(0)  # [F, D] -> [1, F, D]
+
         vertex_features = self.transforms.avg_fv_feat(faces, vertex_features)
 
         # put vertex features into faces
@@ -73,46 +105,83 @@ class MeshAutoencoder(L.LightningModule):
         # render
         if render:
             reconstructed_mesh = reconstruct_mesh(recons)
-            image = render_mesh(reconstructed_mesh)
+            image, mesh = render_mesh(reconstructed_mesh)
 
             # log image to wandb
-            self.logger.experiment.log(
-                {"val_input_image": [wandb.Image(image, caption="val_input_image")]}
+            if hasattr(self.logger.experiment, "log"):
+                self.logger.experiment.log(
+                    {"val_input_image": [wandb.Image(image, caption="val_input_image")]}
+                )
+            save_obj(
+                f"results/mesh_{self.global_step}.obj",
+                mesh.verts_packed(),
+                mesh.faces_packed(),
             )
 
-        ## original loss
-        # verts = batch.verts_packed()
-        # mesh_one_hot_encoding = self.transforms.smooth_one_hot(verts)
-        # mesh_face_vertex_encoding = mesh_one_hot_encoding[faces]
-        # mesh_face_vertex_encoding = rearrange(
-        #     mesh_face_vertex_encoding, "f v x i -> f (v x) i"
-        # )
+        # original loss
+        verts = batch.verts_packed()
+        mesh_one_hot_encoding = self.transforms.smooth_one_hot(verts)
+        mesh_face_vertex_encoding = mesh_one_hot_encoding[faces]
+        mesh_face_vertex_encoding = rearrange(
+            mesh_face_vertex_encoding, "f v x i -> f (v x) i"
+        )
 
-        # log_probs = torch.log(recons + 1e-9)
-        # recons_loss = -torch.sum(log_probs * mesh_face_vertex_encoding)
+        # print(recons[0][3])
+        # print(mesh_face_vertex_encoding[0][3])
+        # print(rearrange(verts[faces], "f v x -> f (v x)")[0][3])
+        # print loss between the first
+
+        log_probs = torch.log(recons + 1e-9)
+        recons_loss = -torch.mean(log_probs * mesh_face_vertex_encoding)
+
+        test_log_probs = torch.log(mesh_face_vertex_encoding + 1e-9)
+        test_recons_loss = -torch.mean(test_log_probs * mesh_face_vertex_encoding)
+
+        # print(recons[0][0])
+        # print(mesh_face_vertex_encoding[0][0])
+        # # print(torch.sum(recons[0][0]))
+        # # print(torch.sum(mesh_face_vertex_encoding[0][0]))
+        # # print(rearrange(verts[faces], "f v x -> f (v x)")[0][0])
+        # print(recons_loss)
+        # print(test_recons_loss)
 
         ## l2 loss for each vertex
         # recons: [F,9,128]
         # choose maximum for each vertex coordinate: [F,9,128] -> [F,9]
-        recons = recons.max(dim=-1)[0]
-        # recons: [F,9]
-        # divide by 128
-        recons = recons / 128
-        # recons: [F,9]
 
-        # get face verts
-        verts = batch.verts_packed()
-        face_verts = verts[faces]
-        # face_verts: [F, 3, 3]
-        # flatten to [F,9]
-        face_verts = rearrange(face_verts, "f v c -> f (v c)")
-        # face_verts: [F, 9]
+        # recons = recons.max(dim=-1)[0]
+        # # recons: [F,9]
+        # # divide by 128
+        # recons = recons / 128
+        # # recons: [F,9]
 
-        # get l2 loss
-        recons_loss = torch.nn.functional.mse_loss(recons, face_verts)
+        # # get face verts
+        # verts = batch.verts_packed()
+        # face_verts = verts[faces]
+        # # face_verts: [F, 3, 3]
+        # # flatten to [F,9]
+        # face_verts = rearrange(face_verts, "f v c -> f (v c)")
+        # # face_verts: [F, 9]
+
+        # print(face_verts)
+
+        # # get l2 loss
+        # recons_loss = F.mse_loss(recons, face_verts)
+
+        ## Final loss
+        # verts = batch.verts_packed()
+        # face_verts = verts[faces]
+        # ground_truth = rearrange(face_verts, "f v c -> (f v c)").long() * 127
+        # recons = rearrange(recons, "f v c -> (f v) c")
+
+        # torch.set_printoptions(threshold=torch.inf)
+        # print(ground_truth[:9], ground_truth.shape)
+        # print(recons[:9], recons.shape)
+
+        # recons_loss = self.criterion(recons, ground_truth)
 
         return recons_loss, commit_loss
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        optimizer = torch.optim.Adam(self.parameters(), lr=0.0001)
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         return optimizer

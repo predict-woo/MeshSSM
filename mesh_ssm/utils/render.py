@@ -9,7 +9,7 @@ from pytorch3d.renderer import (
     TexturesVertex,
 )
 from pytorch3d.structures import Meshes
-
+from pytorch3d.io import save_obj
 from matplotlib import pyplot as plt
 import torch
 
@@ -19,6 +19,7 @@ from .mesh import Transforms
 import wandb
 from PIL import Image
 import numpy as np
+
 
 transforms = Transforms(device="cpu")
 
@@ -117,4 +118,4 @@ def render_mesh(mesh: Meshes):
     image = Image.fromarray(data)
     image.save("test.png")
 
-    return image
+    return image, mesh

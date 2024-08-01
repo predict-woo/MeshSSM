@@ -39,20 +39,18 @@ class FaceFeatureExtractor:
         angles = derive_angle(diff_1, diff_2)
 
         # normals
-        cross = torch.cross(diff_1[:, 0, :], diff_2[:, 0, :], dim=-1)
-        normals = F.normalize(cross, dim=-1, p=2)
+        normals = meshes.faces_normals_packed()
 
-        # area
-        area = 0.5 * torch.unsqueeze(torch.norm(cross, dim=-1), -1)
+        # areas
+        area = meshes.faces_areas_packed().unsqueeze(-1)
 
-        # concat each face features into 9 vertice coordinates, 1 area, 3 angles, 3 normals -> 16 features
-        # [B, 3, 3] -> [B*3, 3]
-        face_verts = rearrange(face_verts, "b n v -> (b n) v")
-        face_verts = self.positional_encoder.encode(face_verts)
-        face_verts = rearrange(face_verts, "(b n) v -> b (n v)", n=3)
+        # positional encoding for vertices
+        enc_verts = self.positional_encoder.encode(verts)
+        enc_face_vert = enc_verts[faces]
+        enc_face_vert = rearrange(enc_face_vert, "f v d -> f (v d)")
 
         # concat face features
-        face_features = torch.cat([face_verts, area, angles, normals], dim=-1)
+        face_features = torch.cat([enc_face_vert, area, angles, normals], dim=-1)
 
         return face_features
 
@@ -193,6 +191,9 @@ class Transforms:
         one_hot_verts_reshaped = one_hot_verts.view(-1, 1, 128)
         one_hot_verts_smoothed = self.conv1d(one_hot_verts_reshaped)
         one_hot_verts_smoothed = one_hot_verts_smoothed.view(-1, 3, 128)
+        one_hot_verts_smoothed = one_hot_verts_smoothed / one_hot_verts_smoothed.sum(
+            dim=-1, keepdim=True
+        )
 
         return one_hot_verts_smoothed
 

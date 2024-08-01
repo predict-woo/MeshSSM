@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from einops import rearrange
 
 
 def conv3(in_planes, out_planes, stride=1):
@@ -86,7 +87,14 @@ class ResNet(nn.Module):
         x = self.layer4(x)
         x = torch.permute(x, (0, 2, 1))
         logits = self.fc(x)
-        probas = F.softmax(logits, dim=1)
+
+        # logits = F.softplus(logits)
+        # logits = logits + 1e-9
+        # logits = logits / torch.sum(logits, dim=-1, keepdim=True)
+        logits = rearrange(logits, "b f (fc p) -> b f fc p", fc=9)
+        probas = F.softmax(logits, dim=-1)
+        probas = rearrange(probas, "b f fc p -> b f (fc p)")
+        # return probas
         return probas
 
 
