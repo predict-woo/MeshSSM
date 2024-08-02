@@ -1,55 +1,67 @@
 # # Copyright (c) 2023, Tri Dao, Albert Gu.
 
 import torch
-import numpy as np
 import igl
 from pytorch3d.structures import Meshes
 from einops import rearrange
-from pytorch3d.io import load_obj
+from pytorch3d.io import load_obj, save_obj
 
-# Example mesh provided by the user
-verts = torch.tensor([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=torch.float)
-faces = torch.tensor(
-    [
-        [0, 1, 2],
-        [0, 2, 3],
-        [0, 3, 1],
-    ],
-    dtype=torch.int64,
-)
-meshes = Meshes(verts=[verts], faces=[faces])
+device = torch.device("cuda:6")
 
 
-# Function to compute the triangle-triangle adjacency matrix
-def compute_triangle_adjacency(meshes: Meshes):
-    # Extract vertices and faces from the PyTorch3D mesh
-    verts = meshes.verts_list()[0]  # Assuming a single mesh in the list
-    faces = meshes.faces_list()[0]
-
-    # Convert to numpy arrays
-    verts_np = verts.numpy()
-    faces_np = faces.numpy()
-
-    # Compute the adjacency matrix using libigl
-    TT, TTi = igl.triangle_triangle_adjacency(faces_np)
-
-    # TT to tensor
-    TT = torch.tensor(TT, dtype=torch.int64)
-
-    # create index matrix of same size
-    ind = torch.arange(TT.shape[0]).unsqueeze(-1).repeat(1, TT.shape[1])
-
-    # append ind to each element in TT
+def igl_compute_adjacencies(F):
+    F = F.cpu().numpy()
+    TT, TTi = igl.triangle_triangle_adjacency(F)
+    TT = torch.tensor(TT, dtype=torch.int32, device=device)
+    ind = torch.arange(TT.shape[0], device=device).unsqueeze(-1).repeat(1, TT.shape[1])
     TT_combined = torch.stack((ind, TT), dim=-1)
-
-    # flatten and reshape
     edges = TT_combined.reshape(-1, 2)
     edges = edges[edges[:, 1] != -1]
-
-    # sort edges
     edges = torch.sort(edges, dim=1)[0]
+    unique_edges, inverse_indices, counts = torch.unique(
+        edges, return_inverse=True, return_counts=True, dim=0
+    )
 
-    # unique edges
+    return unique_edges
+
+
+def igl_conv_torch_compute_adjacencies(F):
+    n = F.max().item() + 1
+    VF = [[] for _ in range(n)]
+    NI = torch.zeros(n + 1, dtype=torch.int32, device=device)
+    TT = torch.full((F.size(0), 3), -1, dtype=torch.int32, device=device)
+
+    # Create vertex to triangle adjacency
+    for f in range(F.size(0)):
+        for k in range(3):
+            VF[F[f, k].item()].append(f)
+    NI[1:] = torch.cumsum(
+        torch.tensor([len(v) for v in VF], dtype=torch.int32, device=device), dim=0
+    )
+
+    # Flatten the VF list
+    VF_flat = torch.zeros(NI[-1].item(), dtype=torch.int32, device=device)
+    idx = 0
+    for v in VF:
+        VF_flat[idx : idx + len(v)] = torch.tensor(v, dtype=torch.int32, device=device)
+        idx += len(v)
+
+    # Compute TT
+    for f in range(F.size(0)):
+        for k in range(3):
+            vi = F[f, k].item()
+            vin = F[f, (k + 1) % 3].item()
+            for j in range(NI[vi], NI[vi + 1]):
+                fn = VF_flat[j].item()
+                if fn != f and (F[fn, 0] == vin or F[fn, 1] == vin or F[fn, 2] == vin):
+                    TT[f, k] = fn
+                    break
+
+    ind = torch.arange(TT.shape[0], device=device).unsqueeze(-1).repeat(1, TT.shape[1])
+    TT_combined = torch.stack((ind, TT), dim=-1)
+    edges = TT_combined.reshape(-1, 2)
+    edges = edges[edges[:, 1] != -1]
+    edges = torch.sort(edges, dim=1)[0]
     unique_edges, inverse_indices, counts = torch.unique(
         edges, return_inverse=True, return_counts=True, dim=0
     )
@@ -67,66 +79,20 @@ def compute_adjacencies(faces):
     # Sort edges so that the smaller index comes first
     edges = torch.sort(edges, dim=1)[0]
     # get unique edges
-    print(edges)
     unique_edges, inverse_indices, counts = torch.unique(
         edges, return_inverse=True, return_counts=True, dim=0
     )
-    print(unique_edges)
-    print(inverse_indices)
-    print(counts)
     # Filter to get the edges that are shared by exactly two faces
     shared_edge_indices = (counts == 2).nonzero(as_tuple=True)[0]
-    print(shared_edge_indices)
-    # check if the edge is shared by two faces
-    mask = inverse_indices.unsqueeze(1) == shared_edge_indices.unsqueeze(0)
-    print(mask)
-    # get indices of faces that share the edge
-    indices = mask.nonzero(as_tuple=False)
-    print(indices)
-    # sort the indices based on the second index
-    sorted_tensor, sorted_indices = torch.sort(indices[:, 1])
-    sorted_tensor = indices[sorted_indices]
-    # get the first index
-    sorted_tensor = sorted_tensor[:, 0]
-    # reshape to get a list of edges
-    adjacencies = sorted_tensor.view(-1, 2)
-
-    return adjacencies
-
-
-def compute_adjacencies(faces):
-    # rotate vertices in faces
-    rotated_faces = torch.roll(faces, 1, dims=1)
-    # concat to create edges
-    concat_faces = torch.cat([faces.unsqueeze(-1), rotated_faces.unsqueeze(-1)], dim=-1)
-    # flatten to get a list of edges
-    edges = rearrange(concat_faces, "b n v -> (b n) v")
-    # Sort edges so that the smaller index comes first
-    edges = torch.sort(edges, dim=1)[0]
-    # get unique edges
-    print(edges)
-    unique_edges, inverse_indices, counts = torch.unique(
-        edges, return_inverse=True, return_counts=True, dim=0
-    )
-    print(unique_edges)
-    print(inverse_indices)
-    print(counts)
-    # Filter to get the edges that are shared by exactly two faces
-    shared_edge_indices = (counts == 2).nonzero(as_tuple=True)[0]
-    print(shared_edge_indices)
     # rearrange unique edges to be (b, n, v)
     inverse_indices = rearrange(inverse_indices, "(b n) -> b n", n=3)
-    print("inverse_indices", inverse_indices)
     # check if the edge is shared by two faces
     mask = inverse_indices.unsqueeze(-1) == shared_edge_indices.unsqueeze(0)
-    print(mask, mask.shape)
     # get indices of faces that share the edge
     indices = mask.nonzero(as_tuple=False)
-    print(indices)
     # sort the indices based on the second index
     sorted_tensor, sorted_indices = torch.sort(indices[:, 2])
     sorted_tensor = indices[sorted_indices]
-    print(sorted_tensor)
     # get the first index
     sorted_tensor = sorted_tensor[:, 0]
     # reshape to get a list of edges
@@ -149,39 +115,21 @@ def lexical_sort(tensor):
     return tensor
 
 
-verts, faces, aux = load_obj("Horse.obj")
-meshes = Meshes(verts=[verts], faces=[faces.verts_idx])
+verts, faces, aux = load_obj("tea.txt")
+meshes = Meshes(verts=[verts] * 100, faces=[faces.verts_idx] * 100)
+meshes.to(device)
+
+import time
+
+# start = time.time()
+# TT_2 = compute_adjacencies(meshes.faces_packed())
+# TT_2 = lexical_sort(TT_2)
+# print(time.time() - start)
+# print(TT_2, TT_2.shape)
 
 
-TT_2 = compute_adjacencies(faces.verts_idx)
-TT_2 = lexical_sort(TT_2)
-print("Triangle-Triangle Adjacency Matrix:\n", TT_2)
-
-# print entire tensor to file
-with open("TT_2.txt", "w") as f:
-    for i in range(TT_2.shape[0]):
-        f.write(str(TT_2[i][0].item()) + " " + str(TT_2[i][1].item()) + "\n")
-
-
-# # Compute the adjacency matrix
-TT = compute_triangle_adjacency(meshes)
+start = time.time()
+TT = igl_compute_adjacencies(meshes.faces_packed())
 TT = lexical_sort(TT)
-print("Triangle-Triangle Adjacency Matrix:\n", TT)
-
-with open("TT.txt", "w") as f:
-    for i in range(TT.shape[0]):
-        f.write(str(TT[i][0].item()) + " " + str(TT[i][1].item()) + "\n")
-
-# # print 1th dimension elements in TT that are not in TT_2
-# for i in range(TT.shape[0]):
-#     if TT[i, 0] != TT_2[i, 0] or TT[i, 1] != TT_2[i, 1]:
-#         print(TT[i])
-#         print(TT_2[i])
-#         exit()
-
-
-# TT = compute_adjacencies(faces)
-# print("Triangle-Triangle Adjacency Matrix:\n", TT)
-
-# TT = compute_triangle_adjacency(meshes)
-# print("Triangle-Triangle Adjacency Matrix:\n", TT)
+print(time.time() - start)
+print(TT, TT.shape)

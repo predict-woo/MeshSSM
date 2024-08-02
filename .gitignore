@@ -4,3 +4,4 @@ mesh-ssm/
 **/__pycache__/
 **/*.pyc
 **/*.pyo
+**/*.obj

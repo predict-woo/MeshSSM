@@ -7,8 +7,6 @@ from torch.utils.data import DataLoader
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import Dataset, DataLoader
-from pytorch_lightning.profilers import PyTorchProfiler
-import torch
 
 
 class AugmentedHorseMeshDataset(Dataset):
@@ -37,28 +35,28 @@ def collate_meshes(batch):
 
 
 wandb_logger = WandbLogger(log_model="all", project="mesh-ssm")
-profiler = PyTorchProfiler(
-    on_trace_ready=torch.profiler.tensorboard_trace_handler("tb_logs/profiler0"),
-    trace_memory=True,
-    schedule=torch.profiler.schedule(skip_first=1, wait=0, warmup=0, active=1),
-)
+
+from lightning.pytorch.profilers import AdvancedProfiler
+
+
+profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
 
 trainer = L.Trainer(
     accelerator="gpu",
-    devices=[1],
+    devices=[4],
     logger=wandb_logger,
-    max_epochs=3,
+    max_epochs=5,
     log_every_n_steps=1,
     profiler=profiler,
 )
 model = MeshAutoencoder()
 
-train_dataset = AugmentedHorseMeshDataset("tea.obj", 1600)
+train_dataset = AugmentedHorseMeshDataset("Horse.obj", 6400)
 train_dataloader = DataLoader(
-    train_dataset, batch_size=16, collate_fn=collate_meshes, num_workers=30
+    train_dataset, batch_size=64, collate_fn=collate_meshes, num_workers=30
 )
 
-val_dataset = AugmentedHorseMeshDataset("tea.obj", 1)
+val_dataset = AugmentedHorseMeshDataset("Horse.obj", 1)
 val_dataloader = DataLoader(val_dataset, batch_size=1, collate_fn=collate_meshes)
 
 
