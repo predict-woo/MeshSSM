@@ -1,5 +1,7 @@
 import torch
 from pytorch3d.structures import Meshes
+from pytorch3d.transforms import axis_angle_to_matrix
+import numpy as np
 
 
 def scale_augmentation(meshes: Meshes, scale_range=(0.75, 1.25)):
@@ -58,6 +60,21 @@ def normalize_mesh(meshes: Meshes):
         normalized_verts = (verts - min_coords.unsqueeze(0)) / max_extent
         normalized_verts_list.append(normalized_verts)
     return Meshes(verts=normalized_verts_list, faces=meshes.faces_list())
+
+
+def rotate_mesh(meshes: Meshes, rotation_range=(0, 2 * np.pi)):
+    """
+    Apply rotation augmentation to the mesh.
+    """
+    rotated_verts_list = []
+    for verts in meshes.verts_list():
+        rotation_angle = torch.FloatTensor(1).uniform_(*rotation_range)
+        rotation_matrix = axis_angle_to_matrix(
+            verts.new_tensor([0, 1, 0], dtype=torch.float32), rotation_angle
+        )
+        rotated_verts = torch.einsum("nxy,nxyz->nxyz", rotation_matrix, verts)
+        rotated_verts_list.append(rotated_verts)
+    return Meshes(verts=rotated_verts_list, faces=meshes.faces_list())
 
 
 def sort_mesh_faces(meshes: Meshes) -> Meshes:

@@ -1,8 +1,7 @@
 from mesh_ssm.models.mesh_autoencoder import MeshAutoencoder
 from pytorch3d.io import load_obj
-from mesh_ssm.utils.mesh import FaceFeatureExtractor
 from pytorch3d.structures import Meshes
-from mesh_ssm.utils.augment import augment_mesh, normalize_mesh
+from mesh_ssm.utils.augment import augment_mesh
 from torch.utils.data import DataLoader
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger

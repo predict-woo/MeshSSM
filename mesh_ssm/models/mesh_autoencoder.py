@@ -13,6 +13,7 @@ import torch
 from mesh_ssm.utils.render import reconstruct_mesh, render_mesh
 import wandb
 import gc
+import os
 
 
 def getBack(var_grad_fn):
@@ -30,16 +31,21 @@ def getBack(var_grad_fn):
 
 
 class MeshAutoencoder(L.LightningModule):
-    def __init__(self):
+    def __init__(self, lr=0.001, ks=9, path="results", name="mesh_autoencoder"):
         super().__init__()
         self.encoder = MeshEncoder()
         self.decoder = MeshDecoder()
         self.rq = ResidualVectorQuantizer(n_e=192, e_dim=192, num_quantizers=2)
         self.feature_extractor = FaceFeatureExtractor()
         self.transforms = None
+        self.lr = lr
+        self.ks = ks
+        self.path = f"{path}/{name}_ks[{ks}]_lr[{lr}]"
+        if not os.path.exists(self.path):
+            os.makedirs(self.path)
 
     def setup(self, stage=None):
-        self.transforms = Transforms(device=self.device)
+        self.transforms = Transforms(device=self.device, kernel_size=self.ks)
 
     def test_step(self, batch: Meshes, batch_idx: int):
         recons_loss, commit_loss = self.common_step(batch, batch_idx, render=True)
@@ -67,9 +73,13 @@ class MeshAutoencoder(L.LightningModule):
 
         # average face features
         faces = batch.faces_packed()
+        verts = batch.verts_packed()
+
         vertex_features = vertex_features.unsqueeze(0)  # [F, D] -> [1, F, D]
 
-        vertex_features = self.transforms.avg_fv_feat(faces, vertex_features)
+        vertex_features = self.transforms.avg_fv_feat(
+            faces, vertex_features, verts.shape[0]
+        )
 
         # put vertex features into faces
         vertex_features = vertex_features.squeeze(0)
@@ -100,36 +110,24 @@ class MeshAutoencoder(L.LightningModule):
             #     self.logger.experiment.log(
             #         {"val_input_image": [wandb.Image(image, caption="val_input_image")]}
             #     )
-            # save_obj(
-            #     f"results/tea/mesh_{self.global_step}.obj",
-            #     mesh.verts_packed(),
-            #     mesh.faces_packed(),
-            # )
+            save_obj(
+                f"{self.path}/mesh_{self.global_step}.obj",
+                mesh.verts_packed(),
+                mesh.faces_packed(),
+            )
 
         # original loss
-        verts = batch.verts_packed()
         mesh_one_hot_encoding = self.transforms.smooth_one_hot(verts)
         mesh_face_vertex_encoding = mesh_one_hot_encoding[faces]
-        mesh_face_vertex_encoding = rearrange(
-            mesh_face_vertex_encoding, "f v x i -> f (v x) i"
-        )
+        truth = rearrange(mesh_face_vertex_encoding, "f v x i -> f (v x) i")
 
-        log_probs = torch.log(recons + 1e-9)
-        recons_loss = -torch.mean(log_probs * mesh_face_vertex_encoding)
-
-        # test_log_probs = torch.log(mesh_face_vertex_encoding + 1e-9)
-        # test_recons_loss = -torch.mean(test_log_probs * mesh_face_vertex_encoding)
-
-        # print(recons[0][0])
-        # print(mesh_face_vertex_encoding[0][0])
-        # # print(torch.sum(recons[0][0]))
-        # # print(torch.sum(mesh_face_vertex_encoding[0][0]))
-        # # print(rearrange(verts[faces], "f v x -> f (v x)")[0][0])
-        # print(recons_loss)
-        # print(test_recons_loss)
+        # KL divergence
+        log_pred = torch.log(recons + 1e-9)
+        log_truth = torch.log(truth + 1e-9)
+        recons_loss = torch.mean((log_truth - log_pred) * truth)
 
         return recons_loss, commit_loss
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer

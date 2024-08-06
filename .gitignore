@@ -1,6 +1,8 @@
 lightning_logs/
 wandb/
 mesh-ssm/
+mesh-ssm-opt/
+results/
 **/__pycache__/
 **/*.pyc
 **/*.pyo

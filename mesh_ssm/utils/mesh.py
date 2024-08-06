@@ -25,7 +25,6 @@ class FaceFeatureExtractor:
         )
 
     def get_derived_face_features(self, meshes: Meshes) -> torch.Tensor:
-
         # pack into single tensor
         verts = meshes.verts_packed()  # [num_vertices, 3]
         faces = meshes.faces_packed()  # [num_faces, 3]
@@ -92,8 +91,8 @@ class FaceFeatureExtractor:
 
 
 class Transforms:
-    def __init__(self, device):
-        self.kernel_size = 9
+    def __init__(self, device, kernel_size=9):
+        self.kernel_size = kernel_size
         self.device = device
         self.kernel = self.gaussian_kernel(
             size=self.kernel_size, sigma=self.kernel_size / 6.0

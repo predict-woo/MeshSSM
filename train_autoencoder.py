@@ -36,26 +36,29 @@ def collate_meshes(batch):
     return Meshes(verts=verts, faces=faces)
 
 
-wandb_logger = WandbLogger(log_model="all", project="mesh-ssm")
-profiler = PyTorchProfiler(
-    on_trace_ready=torch.profiler.tensorboard_trace_handler("tb_logs/profiler0"),
-    trace_memory=True,
-    schedule=torch.profiler.schedule(skip_first=1, wait=0, warmup=0, active=1),
+lr = 0.001
+ks = 9
+path = "results"
+name = "tea-kl"
+
+wandb_logger = WandbLogger(
+    log_model="all", project="mesh-ssm", name=f"{name}-{lr}-{ks}"
 )
+
+devices = [5]
 
 trainer = L.Trainer(
     accelerator="gpu",
-    devices=[1],
+    devices=devices,
     logger=wandb_logger,
-    max_epochs=3,
-    log_every_n_steps=1,
-    profiler=profiler,
+    max_epochs=100,
+    log_every_n_steps=10,
 )
-model = MeshAutoencoder()
+model = MeshAutoencoder(lr=lr, ks=ks, path=path, name=name)
 
 train_dataset = AugmentedHorseMeshDataset("tea.obj", 1600)
 train_dataloader = DataLoader(
-    train_dataset, batch_size=16, collate_fn=collate_meshes, num_workers=30
+    train_dataset, batch_size=16, collate_fn=collate_meshes, num_workers=90
 )
 
 val_dataset = AugmentedHorseMeshDataset("tea.obj", 1)
