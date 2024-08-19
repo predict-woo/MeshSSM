@@ -1,31 +1,41 @@
-import pytorch_lightning as pl
+import lightning as L
 from transformers import GPT2Config, GPT2LMHeadModel
-import torch
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
-class TransformerModel(pl.LightningModule):
-    def __init__(self, n_positions=1024, n_ctx=1024, n_embd=192, n_layer=12, n_head=12):
-        super().__init__()
-        config = GPT2Config(
-            vocab_size=1,  # Not using a vocab
-            n_positions=n_positions,  # Adjust as necessary
-            n_ctx=n_ctx,
-            n_embd=n_embd,
-            n_layer=n_layer,
-            n_head=n_head,
+class MeshGPT(L.LightningModule):
+    def __init__(
+        self,
+        config: GPT2Config,
+        lr=1e-4,
+        weight_decay=0.01,
+        max_epochs=100,
+    ):
+        super(MeshGPT, self).__init__()
+        self.save_hyperparameters()
+
+        self.config = config
+        self.model = GPT2LMHeadModel(self.config)
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.max_epochs = max_epochs
+
+    def forward(self, input_ids, attention_mask, labels):
+        return self.model(
+            input_ids=input_ids, attention_mask=attention_mask, labels=labels
         )
-        self.model = GPT2LMHeadModel(config)
-        self.model.transformer.wte = torch.nn.Identity()
-
-    def forward(self, inputs):
-        outputs = self.model(inputs)
-        return outputs.logits
 
     def training_step(self, batch, batch_idx):
-        inputs, targets = batch
-        outputs = self(inputs)
-        loss = torch.nn.functional.mse_loss(outputs, targets)
+        input_ids = batch["input_ids"]
+        attention_mask = batch["attention_mask"]
+        labels = batch["labels"]
+
+        result = self(input_ids, attention_mask, labels)
+        loss = result.loss
+        self.log("train_loss", loss)
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=5e-5)
+        optimizer = AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        return optimizer

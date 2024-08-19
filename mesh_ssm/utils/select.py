@@ -1,90 +1,206 @@
-import trimesh
-import numpy as np
 import torch
-from pytorch3d.structures import Meshes
 from pytorch3d.io import load_obj, save_obj
+from pytorch3d.structures import Meshes
+import numpy as np
+import os
+import bpy
+import bmesh
+import igl
+
+# set torch device to cpu
+device = torch.device("cpu")
 
 
-def decimate_mesh(mesh, target_faces):
-    """
-    Decimate the mesh to a target number of faces using trimesh.
+# class ShapeNetV2Dataset(Dataset):
+#     def __init__(
+#         self,
+#         root_dir,
+#         categories,
+#         split="train",
+#         max_faces=800,
+#         hausdorff_threshold=0.01,
+#     ):
+#         self.root_dir = root_dir
+#         self.categories = categories
+#         self.split = split
+#         self.max_faces = max_faces
+#         self.hausdorff_threshold = hausdorff_threshold
 
-    Args:
-    - mesh (Meshes): Input mesh to be decimated.
-    - target_faces (int): Target number of faces for the decimated mesh.
+#         self.shapes = self._load_shapes()
 
-    Returns:
-    - Meshes: Decimated mesh.
-    """
-    trimesh_mesh = trimesh.Trimesh(
-        vertices=mesh.verts_list()[0].cpu().numpy(),
-        faces=mesh.faces_list()[0].cpu().numpy(),
-    )
-    decimated_mesh = trimesh_mesh.simplify_quadratic_decimation(target_faces)
-    return Meshes(
-        verts=[torch.tensor(decimated_mesh.vertices).float()],
-        faces=[torch.tensor(decimated_mesh.faces).long()],
-    )
+#     def _load_shapes(self):
+#         shapes = []
+#         for category in self.categories:
+#             category_dir = os.path.join(self.root_dir, category)
+#             shape_files = os.listdir(category_dir)
+
+#             if self.split == "train":
+#                 shape_files = shape_files[: int(0.9 * len(shape_files))]
+#             elif self.split == "test":
+#                 shape_files = shape_files[int(0.9 * len(shape_files)) :]
+
+#             for shape_file in shape_files:
+#                 shape_path = os.path.join(category_dir, shape_file)
+#                 decimated_shape = self._decimate_shape(shape_path)
+
+#                 if decimated_shape is not None:
+#                     shapes.append(decimated_shape)
+
+#         return shapes
+
+#     def _decimate_shape(self, shape_path):
+#         # Load original mesh
+#         verts, faces, _ = load_obj(shape_path)
+#         original_verts = verts.numpy()
+#         original_faces = faces.verts_idx.numpy()
+
+#         # Decimate mesh using Blender
+#         bpy.ops.import_scene.obj(filepath=shape_path)
+#         obj = bpy.context.selected_objects[0]
+#         bpy.context.view_layer.objects.active = obj
+
+#         best_mesh = None
+#         best_hausdorff = float("inf")
+
+#         for angle in range(1, 61):
+#             bpy.ops.object.modifier_add(type="DECIMATE")
+#             decimate = obj.modifiers["Decimate"]
+#             decimate.decimate_type = "DISSOLVE"
+#             decimate.angle_limit = angle * np.pi / 180
+
+#             bpy.ops.object.modifier_apply(modifier="Decimate")
+
+#             # Get decimated mesh data
+#             bm = bmesh.new()
+#             bm.from_mesh(obj.data)
+#             bm.verts.ensure_lookup_table()
+#             bm.faces.ensure_lookup_table()
+
+#             decimated_verts = np.array([v.co for v in bm.verts])
+#             decimated_faces = np.array([[v.index for v in f.verts] for f in bm.faces])
+
+#             # Calculate Hausdorff distance using igl
+#             hausdorff_dist, _ = igl.hausdorff(
+#                 original_verts, original_faces, decimated_verts, decimated_faces
+#             )
+
+#             if (
+#                 hausdorff_dist < self.hausdorff_threshold
+#                 and hausdorff_dist < best_hausdorff
+#                 and len(decimated_faces) <= self.max_faces
+#             ):
+#                 best_mesh = Meshes(
+#                     verts=[torch.tensor(decimated_verts)],
+#                     faces=[torch.tensor(decimated_faces)],
+#                 )
+#                 best_hausdorff = hausdorff_dist
+
+#             bm.free()
+#             bpy.ops.object.mode_set(mode="EDIT")
+#             bpy.ops.mesh.select_all(action="SELECT")
+#             bpy.ops.mesh.delete(type="VERT")
+#             bpy.ops.object.mode_set(mode="OBJECT")
+
+#         bpy.ops.object.delete()
+
+#         if best_mesh is not None:
+#             # Normalize mesh
+#             center = best_mesh.verts_packed().mean(dim=0)
+#             verts = best_mesh.verts_packed() - center
+#             scale = verts.abs().max()
+#             verts = verts / scale
+
+#             return Meshes(verts=[verts], faces=best_mesh.faces_list())
+
+#         return None
+
+#     def __len__(self):
+#         return len(self.shapes)
+
+#     def __getitem__(self, idx):
+#         return self.shapes[idx]
+
+# def collate_fn(batch):
+#     return Meshes.from_data_list(batch)
 
 
-def hausdorff_distance(mesh1, mesh2):
-    """
-    Calculate the Hausdorff distance between two meshes.
+def decimate_shape(shape_path, hausdorff_threshold=0.01):
+    # Load original mesh
+    verts, faces, _ = load_obj(shape_path)
+    original_verts = verts.numpy()
+    original_faces = faces.verts_idx.numpy()
 
-    Args:
-    - mesh1 (Meshes): First mesh.
-    - mesh2 (Meshes): Second mesh.
+    # Decimate mesh using Blender
+    bpy.ops.import_scene.obj(filepath=shape_path)
+    obj = bpy.context.selected_objects[0]
+    bpy.context.view_layer.objects.active = obj
 
-    Returns:
-    - float: Hausdorff distance.
-    """
-    verts1 = mesh1.verts_list()[0].cpu().numpy()
-    verts2 = mesh2.verts_list()[0].cpu().numpy()
-    d1 = np.max(np.min(np.linalg.norm(verts1[:, None] - verts2, axis=2), axis=1))
-    d2 = np.max(np.min(np.linalg.norm(verts2[:, None] - verts1, axis=2), axis=1))
-    return max(d1, d2)
+    best_mesh = None
+    best_hausdorff = float("inf")
+
+    for angle in range(1, 61):
+        bpy.ops.object.modifier_add(type="DECIMATE")
+        decimate = obj.modifiers["Decimate"]
+        decimate.decimate_type = "DISSOLVE"
+        decimate.angle_limit = angle * np.pi / 180
+
+        bpy.ops.object.modifier_apply(modifier="Decimate")
+
+        # Get decimated mesh data
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        decimated_verts = np.array([v.co for v in bm.verts])
+        decimated_faces = np.array([[v.index for v in f.verts] for f in bm.faces])
+
+        # Calculate Hausdorff distance using igl
+        hausdorff_dist, _ = igl.hausdorff(
+            original_verts, original_faces, decimated_verts, decimated_faces
+        )
+
+        if hausdorff_dist < hausdorff_threshold and hausdorff_dist < best_hausdorff:
+            best_mesh = Meshes(
+                verts=[torch.tensor(decimated_verts)],
+                faces=[torch.tensor(decimated_faces)],
+            )
+            best_hausdorff = hausdorff_dist
+
+        bm.free()
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.delete(type="VERT")
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    bpy.ops.object.delete()
+
+    if best_mesh is not None:
+        # Normalize mesh
+        center = best_mesh.verts_packed().mean(dim=0)
+        verts = best_mesh.verts_packed() - center
+        scale = verts.abs().max()
+        verts = verts / scale
+
+        return Meshes(verts=[verts], faces=best_mesh.faces_list())
+
+    return None
 
 
-def select_meshes(mesh_list, hausdorff_threshold, max_faces):
-    """
-    Select meshes based on Hausdorff distance and face count.
+# Usage example
+root_dir = "/path/to/ShapeNetV2"
+categories = ["Chair", "Table", "Bench", "Lamp"]
+train_dataset = ShapeNetV2Dataset(root_dir, categories, split="train")
 
-    Args:
-    - mesh_list (list of Meshes): List of input meshes.
-    - hausdorff_threshold (float): Hausdorff distance threshold.
-    - max_faces (int): Maximum number of faces for the decimated mesh.
+res = train_dataset._decimate_shape("a.obj")
 
-    Returns:
-    - list of Meshes: List of selected meshes.
-    """
-    selected_meshes = []
-    for mesh in mesh_list:
-        decimated_mesh = decimate_mesh(mesh, max_faces)
-        hd = hausdorff_distance(mesh, decimated_mesh)
-        if hd < hausdorff_threshold:
-            selected_meshes.append(decimated_mesh)
-    return selected_meshes
+save_obj("b.obj", faces=res.faces_packed(), verts=res.verts_packed())
 
+# train_loader = DataLoader(
+#     train_dataset, batch_size=32, collate_fn=collate_fn, shuffle=True
+# )
 
-# Example usage:
-if __name__ == "__main__":
-    # Create a sample mesh list (replace this with actual loading code)
-    verts, faces, aux = load_obj("Horse2.obj")
-    mesh = Meshes(verts=[verts], faces=[faces.verts_idx])
-
-    # Selection parameters
-    hausdorff_threshold = 0.05
-    max_faces = 800
-
-    # Select meshes
-    selected_meshes = select_meshes(mesh, hausdorff_threshold, max_faces)
-
-    # save the selected mesh
-    save_obj(
-        "selected_mesh.obj",
-        selected_meshes.verts_list()[0],
-        selected_meshes.faces_list()[0],
-    )
-
-    # Print the number of selected meshes
-    print(f"Number of selected meshes: {len(selected_meshes)}")
+# test_dataset = ShapeNetV2Dataset(root_dir, categories, split="test")
+# test_loader = DataLoader(
+#     test_dataset, batch_size=32, collate_fn=collate_fn, shuffle=False
+# )

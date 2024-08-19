@@ -3,6 +3,14 @@ wandb/
 mesh-ssm/
 mesh-ssm-opt/
 results/
+
+
+# any folder starting with mesh-ssm
+mesh-ssm*/
+
+# any folder containing the word "dataset"
+*dataset*/
+
 **/__pycache__/
 **/*.pyc
 **/*.pyo

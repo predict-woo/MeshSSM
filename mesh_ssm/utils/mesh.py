@@ -121,6 +121,9 @@ class Transforms:
         Return:
             (torch.FloatTensor): of shape (B, V, 3)
         """
+
+        face_features = face_features.unsqueeze(0)
+
         if num_vertices is None:
             num_vertices = int(faces.max()) + 1
 
@@ -151,6 +154,9 @@ class Transforms:
 
         counts = counts.clip(min=1).unsqueeze(-1)
         vertex_normals = vertex_features / counts
+
+        vertex_normals = vertex_normals.squeeze(0)
+
         return vertex_normals
 
     def split_features(self, features, num_vertices=3):

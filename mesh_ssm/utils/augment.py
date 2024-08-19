@@ -42,12 +42,34 @@ def jitter_shift_augmentation(meshes: Meshes, jitter_range=(-0.1, 0.1)):
     return Meshes(verts=jittered_verts_list, faces=meshes.faces_list())
 
 
-def normalize_mesh(meshes: Meshes):
+# def normalize_mesh(meshes: Meshes):
+#     """
+#     Normalize the mesh to be centered at origin and scaled to unit length.
+
+#     Args:
+#     - mesh (Meshes): Input mesh to be normalized.
+
+#     Returns:
+#     - Meshes: Normalized mesh.
+#     """
+#     normalized_verts_list = []
+#     for verts in meshes.verts_list():
+#         min_coords = verts.min(dim=0)[0]
+#         max_coords = verts.max(dim=0)[0]
+#         max_extent = torch.max(max_coords - min_coords)
+#         normalized_verts = (verts - min_coords.unsqueeze(0)) / max_extent
+#         normalized_verts_list.append(normalized_verts)
+#     return Meshes(verts=normalized_verts_list, faces=meshes.faces_list())
+
+
+def normalize_mesh(meshes: Meshes, num_bins=128):
     """
-    Normalize the mesh to be centered at origin and scaled to unit length.
+    Normalize the mesh to be centered at origin and scaled to unit length,
+    and fit the mesh into 128 bins.
 
     Args:
     - mesh (Meshes): Input mesh to be normalized.
+    - num_bins (int): Number of bins to fit the mesh into.
 
     Returns:
     - Meshes: Normalized mesh.
@@ -58,7 +80,14 @@ def normalize_mesh(meshes: Meshes):
         max_coords = verts.max(dim=0)[0]
         max_extent = torch.max(max_coords - min_coords)
         normalized_verts = (verts - min_coords.unsqueeze(0)) / max_extent
-        normalized_verts_list.append(normalized_verts)
+
+        # Fit into bins
+        scaled_verts = normalized_verts * (num_bins - 1)
+        indices = scaled_verts.long()
+        scaled_indices = indices / (num_bins - 1)
+
+        normalized_verts_list.append(scaled_indices)
+
     return Meshes(verts=normalized_verts_list, faces=meshes.faces_list())
 
 

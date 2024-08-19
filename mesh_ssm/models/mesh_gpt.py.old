@@ -1,0 +1,64 @@
+import lightning as L
+from transformers import GPT2Model, GPT2Config
+from torch.nn import CrossEntropyLoss
+from transformers import get_linear_schedule_with_warmup
+import torch.nn as nn
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
+import torch
+
+
+class MeshGPT(L.LightningModule):
+    def __init__(
+        self,
+        config: GPT2Config,
+        lr=1e-4,
+        weight_decay=0.01,
+        max_epochs=100,
+    ):
+        super(MeshGPT, self).__init__()
+        self.save_hyperparameters()
+
+        # gpt model
+        self.config = config
+        self.model = GPT2Model(self.config)
+
+        # lm head
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # hyperparameters
+        self.lr = lr
+        self.max_epochs = max_epochs
+
+    def forward(self, input_ids, attention_mask, labels):
+        outputs = self.gpt2(input_ids, attention_mask=attention_mask)
+        hidden_states = outputs.last_hidden_state
+        logits = self.lm_head(hidden_states)
+
+        return logits
+
+    def compute_loss(self, logits, labels):
+        # Assuming the model is used for language modeling, which often uses CrossEntropyLoss
+        loss_fct = nn.CrossEntropyLoss()
+        # Shift logits and labels to match shape: (batch_size * seq_len, vocab_size)
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        loss = loss_fct(
+            shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+        )
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        input_ids = batch["input_ids"]
+        attention_mask = batch["attention_mask"]
+        labels = batch["labels"]
+
+        logits = self(input_ids, attention_mask, labels)
+        loss = self.compute_loss(logits, labels)
+        self.log("train_loss", loss)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        return optimizer

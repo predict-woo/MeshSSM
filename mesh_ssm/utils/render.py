@@ -8,7 +8,7 @@ from pytorch3d.renderer import (
     SoftPhongShader,
     TexturesVertex,
 )
-from pytorch3d.structures import Meshes
+from pytorch3d.structures import Meshes, packed_to_list, join_meshes_as_batch
 from pytorch3d.io import save_obj
 from matplotlib import pyplot as plt
 import torch
@@ -20,6 +20,7 @@ import wandb
 from PIL import Image
 import numpy as np
 
+from torch import Tensor
 
 transforms = Transforms(device="cpu")
 
@@ -35,35 +36,36 @@ def _deconstruct_mesh(mesh: Meshes):
     return mesh_face_vertex_encoding
 
 
-def reconstruct_mesh(recons):
-    tri_recons = einops.rearrange(recons, "f (t v) n -> f t v n", t=3)
-    face_num, tri, dim, disc = tri_recons.shape
+def reconstruct_mesh(recons, num_faces_per_mesh: Tensor = None):
+    if num_faces_per_mesh is None:
+        num_faces_per_mesh = torch.tensor([recons.shape[0]], device=recons.device)
 
-    discretization = (
-        torch.linspace(0, 1, disc, device=tri_recons.device)
-        .unsqueeze(0)
-        .unsqueeze(0)
-        .unsqueeze(0)
-    )
-    peak_indices = torch.argmax(tri_recons, dim=-1)  # Shape [face_num, tri, dim]
-    vertex_coordinates = torch.gather(
-        discretization.expand(face_num, tri, dim, disc),
-        3,
-        peak_indices.unsqueeze(-1),
-    ).squeeze(
-        -1
-    )  # Shape [face_num, tri, dim]
-    flat_vertices = vertex_coordinates.view(-1, 3)  # Flatten vertices
-    unique_vertices, inverse_indices = torch.unique(
-        flat_vertices, dim=0, return_inverse=True
-    )
+    recons = einops.rearrange(recons, "f (t v) n -> f t v n", t=3)
 
-    # Create face indices from inverse_indices
-    face_indices = inverse_indices.view(-1, 3)  # Reshape to (face_num, 3)
+    discretization = torch.linspace(0, 1, recons.shape[-1], device=recons.device)
+    peak_indices = torch.argmax(recons, dim=-1)
+    recons_disc = discretization[peak_indices]
 
-    # Create mesh using PyTorch3D Meshes structure
-    mesh = Meshes(verts=unique_vertices.unsqueeze(0), faces=face_indices.unsqueeze(0))
-    return mesh
+    list_recons = packed_to_list(recons_disc, num_faces_per_mesh.tolist())
+
+    verts_list = []
+    faces_list = []
+
+    for face_verts in list_recons:
+
+        flat_vertices = face_verts.view(-1, 3)  # Flatten vertices
+
+        unique_vertices, inverse_indices = torch.unique(
+            flat_vertices, dim=0, return_inverse=True
+        )
+
+        # Create face indices from inverse_indices
+        face_indices = inverse_indices.view(-1, 3)  # Reshape to (face_num, 3)
+
+        verts_list.append(unique_vertices)
+        faces_list.append(face_indices)
+
+    return Meshes(verts=verts_list, faces=faces_list)
 
 
 def render_mesh(mesh: Meshes):
