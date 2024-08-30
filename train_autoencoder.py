@@ -9,6 +9,7 @@ from mesh_ssm.utils.mesh import FaceFeatureExtractor
 from pytorch3d.io import load_obj
 from pytorch3d.structures import Meshes, join_meshes_as_batch
 from torch.utils.data import DataLoader, Dataset
+from lightning.pytorch.callbacks import ModelCheckpoint
 
 
 class AugmentedChairDataset(Dataset):
@@ -85,12 +86,30 @@ def main(args):
         name=f"{args.name}-bs[{args.batch_size}]-lr[{args.lr}]-ks[{args.ks}]",
     )
 
+    if not os.path.exists(
+        f"checkpoints/{args.name}-bs[{args.batch_size}]-lr[{args.lr}]-ks[{args.ks}]"
+    ):
+        os.makedirs(
+            f"checkpoints/{args.name}-bs[{args.batch_size}]-lr[{args.lr}]-ks[{args.ks}]"
+        )
+
+    checkpoint_callback = ModelCheckpoint(
+        monitor="validation reconstruction loss",
+        mode="min",
+        save_top_k=3,
+        every_n_epochs=1,
+        dirpath=f"checkpoints/{args.name}-bs[{args.batch_size}]-lr[{args.lr}]-ks[{args.ks}]",
+        filename="{epoch:02d}-{val_loss:.4f}",
+        verbose=True,
+    )
+
     trainer = L.Trainer(
         accelerator="gpu",
         devices=args.devices,
         logger=wandb_logger,
-        max_epochs=500,
-        log_every_n_steps=10,
+        max_epochs=1000,
+        log_every_n_steps=1,
+        callbacks=[checkpoint_callback],
     )
 
     model = MeshAutoencoder(

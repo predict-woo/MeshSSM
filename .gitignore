@@ -15,3 +15,5 @@ mesh-ssm*/
 **/*.pyc
 **/*.pyo
 **/*.obj
+
+checkpoints/

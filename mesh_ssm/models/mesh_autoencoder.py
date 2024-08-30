@@ -1,16 +1,17 @@
 from .mesh_decoder import MeshDecoder
 from .mesh_encoder import MeshEncoder
-from .residual_vector_quantize import ResidualVectorQuantizer
+
+# from .residual_vector_quantize import ResidualVectorQuantizer
 from einops import rearrange
 from mesh_ssm.utils.mesh import FaceFeatureExtractor, Transforms
 from mesh_ssm.utils.render import reconstruct_mesh
 from pytorch3d.io import save_obj
-from pytorch3d.structures import packed_to_list
 from torch import Tensor
 import lightning as L
 import torch
 from typing import Tuple
 import os
+from vector_quantize_pytorch import ResidualVQ
 
 
 class MeshAutoencoder(L.LightningModule):
@@ -21,10 +22,21 @@ class MeshAutoencoder(L.LightningModule):
         path="results",
         name="mesh_autoencoder",
     ):
-        super().__init__()
+        super(MeshAutoencoder, self).__init__()
+        self.save_hyperparameters()
+
         self.encoder = MeshEncoder()
         self.decoder = MeshDecoder()
-        self.rq = ResidualVectorQuantizer(n_e=192, e_dim=192, num_quantizers=2)
+        # self.rq = ResidualVectorQuantizer(n_e=192, e_dim=192, num_quantizers=2)
+        self.rq = ResidualVQ(
+            dim=192,
+            num_quantizers=2,
+            codebook_size=1024,
+            stochastic_sample_codes=True,
+            sample_codebook_temp=0.1,  # temperature for stochastically sampling codes, 0 would be equivalent to non-stochastic
+            shared_codebook=True,
+            decay=0.8,
+        )
         self.feature_extractor = FaceFeatureExtractor()
         self.transforms = None
         self.lr = lr
@@ -36,7 +48,6 @@ class MeshAutoencoder(L.LightningModule):
             os.makedirs(self.path)
 
         self.validation_step_output = None
-        # self.save_hyperparameters()
 
     def setup(self, stage=None):
         self.transforms = Transforms(device=self.device, kernel_size=self.ks)
@@ -157,7 +168,14 @@ class MeshAutoencoder(L.LightningModule):
         avg_v_feat = rearrange(avg_v_feat, "F N D -> (F N) D")
 
         # residual vector quantization
-        z_q, _, commit_loss, all_min_encoding_indices = self.rq(avg_v_feat)
+
+        # z_q, _, commit_loss, all_min_encoding_indices = self.rq(avg_v_feat)
+
+        avg_v_feat = avg_v_feat.unsqueeze(0)
+        z_q, indices, commit_loss = self.rq(avg_v_feat)
+        z_q = z_q.squeeze(0)
+        all_min_encoding_indices = indices.squeeze(0)
+        commit_loss = torch.sum(commit_loss)
 
         if encode:
             return all_min_encoding_indices
